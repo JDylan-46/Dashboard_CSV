@@ -48,19 +48,29 @@ def get_dataset_analysis(request, dataset_id):
         dataset = Dataset.objects.get(id=dataset_id)
         
         # Leer el archivo CSV usando el módulo csv nativo de Python
-        with open(dataset.file.path, 'r', encoding='utf-8-sig') as file:
+        try:
+            # Abrir el archivo directamente desde el FileField
+            file_content = dataset.file.read().decode('utf-8-sig')
+            lines = file_content.splitlines()
+            
+            if not lines:
+                return Response({'error': 'CSV file is empty'}, status=status.HTTP_400_BAD_REQUEST)
+            
             # Detectar el delimitador
-            sample = file.read(1024)
-            file.seek(0)
+            first_line = lines[0]
             delimiter = ','
-            if ';' in sample and sample.count(';') > sample.count(','):
+            if ';' in first_line and first_line.count(';') > first_line.count(','):
                 delimiter = ';'
             
-            reader = csv.DictReader(file, delimiter=delimiter)
+            # Parsear CSV manualmente
+            reader = csv.DictReader(lines, delimiter=delimiter)
             rows = list(reader)
+            
+        except Exception as e:
+            return Response({'error': f'Error reading CSV file: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
         
         if not rows:
-            return Response({'error': 'CSV file is empty'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': 'CSV file has no data rows'}, status=status.HTTP_400_BAD_REQUEST)
         
         column_names = list(rows[0].keys())
         total_rows = len(rows)
@@ -71,7 +81,7 @@ def get_dataset_analysis(request, dataset_id):
                 'rows': total_rows,
                 'columns': len(column_names),
                 'column_names': column_names,
-                'memory_usage': len(str(rows))  # Aproximación simple
+                'memory_usage': len(file_content)  # Tamaño del archivo
             },
             'missing_values': {},
             'duplicates': 0,
@@ -80,16 +90,16 @@ def get_dataset_analysis(request, dataset_id):
             'categorical_summary': {}
         }
         
-        # Analizar cada columna
-        for col in column_names:
-            values = [row[col] for row in rows]
+        # Analizar cada columna (limitar a primeras 10 para rendimiento)
+        for col in column_names[:10]:
+            values = [row.get(col, '') for row in rows]
             
             # Contar valores faltantes
-            missing_count = sum(1 for v in values if v in ['', 'NULL', 'null', 'N/A', 'NA', None])
+            missing_count = sum(1 for v in values if not v or v.strip() in ['', 'NULL', 'null', 'N/A', 'NA', 'None'])
             analysis['missing_values'][col] = missing_count
             
             # Determinar tipo de datos
-            non_empty_values = [v for v in values if v not in ['', 'NULL', 'null', 'N/A', 'NA', None]]
+            non_empty_values = [v.strip() for v in values if v and v.strip() and v.strip() not in ['', 'NULL', 'null', 'N/A', 'NA', 'None']]
             
             if not non_empty_values:
                 analysis['data_types'][col] = 'Empty'
@@ -99,15 +109,22 @@ def get_dataset_analysis(request, dataset_id):
             numeric_count = 0
             numeric_values = []
             
-            for val in non_empty_values[:100]:  # Tomar muestra de 100 valores
+            # Tomar muestra más pequeña para mejor rendimiento
+            sample_size = min(50, len(non_empty_values))
+            sample_values = non_empty_values[:sample_size]
+            
+            for val in sample_values:
                 try:
-                    num_val = float(val.replace(',', '.'))
-                    numeric_values.append(num_val)
-                    numeric_count += 1
+                    # Limpiar el valor antes de convertir
+                    clean_val = str(val).replace(',', '.').replace(' ', '')
+                    if clean_val:
+                        num_val = float(clean_val)
+                        numeric_values.append(num_val)
+                        numeric_count += 1
                 except:
                     pass
             
-            if numeric_count > len(non_empty_values) * 0.7:  # Si más del 70% son numéricos
+            if numeric_count > len(sample_values) * 0.6:  # Si más del 60% son numéricos
                 analysis['data_types'][col] = 'Numérico'
                 
                 # Estadísticas numéricas
@@ -115,39 +132,50 @@ def get_dataset_analysis(request, dataset_id):
                     sorted_vals = sorted(numeric_values)
                     n = len(sorted_vals)
                     
+                    mean_val = sum(sorted_vals) / n
+                    median_val = sorted_vals[n//2] if n % 2 == 1 else (sorted_vals[n//2-1] + sorted_vals[n//2]) / 2
+                    
                     analysis['numeric_summary'][col] = {
-                        'mean': sum(sorted_vals) / n,
-                        'median': sorted_vals[n//2] if n % 2 == 1 else (sorted_vals[n//2-1] + sorted_vals[n//2]) / 2,
-                        'min': min(sorted_vals),
-                        'max': max(sorted_vals),
-                        'unique_values': len(set(sorted_vals))
+                        'mean': round(mean_val, 2),
+                        'median': round(median_val, 2),
+                        'min': round(min(sorted_vals), 2),
+                        'max': round(max(sorted_vals), 2),
+                        'unique_values': len(set(sorted_vals)),
+                        'std': 0  # Inicializar
                     }
                     
                     # Calcular desviación estándar
-                    mean = analysis['numeric_summary'][col]['mean']
-                    variance = sum((x - mean) ** 2 for x in sorted_vals) / n
-                    analysis['numeric_summary'][col]['std'] = variance ** 0.5
+                    if n > 1:
+                        variance = sum((x - mean_val) ** 2 for x in sorted_vals) / n
+                        analysis['numeric_summary'][col]['std'] = round(variance ** 0.5, 2)
             else:
                 analysis['data_types'][col] = 'Texto'
                 
-                # Estadísticas categóricas
-                value_counts = Counter(non_empty_values)
-                most_common = dict(value_counts.most_common(10))
+                # Estadísticas categóricas (tomar muestra para rendimiento)
+                sample_categorical = non_empty_values[:100]  # Máximo 100 valores
+                value_counts = {}
+                for val in sample_categorical:
+                    value_counts[val] = value_counts.get(val, 0) + 1
+                
+                # Obtener los 5 más frecuentes
+                most_frequent = dict(sorted(value_counts.items(), key=lambda x: x[1], reverse=True)[:5])
                 
                 analysis['categorical_summary'][col] = {
                     'unique_values': len(set(non_empty_values)),
-                    'most_frequent': most_common
+                    'most_frequent': most_frequent
                 }
         
-        # Contar duplicados (comparación simple)
+        # Contar duplicados (muestra pequeña para rendimiento)
+        sample_rows = rows[:1000]  # Solo los primeros 1000 para evitar timeout
         seen = set()
         duplicates = 0
-        for row in rows:
-            row_str = str(sorted(row.items()))
-            if row_str in seen:
+        for row in sample_rows:
+            # Crear hash simple de la fila
+            row_hash = hash(tuple(sorted((k, v) for k, v in row.items() if v)))
+            if row_hash in seen:
                 duplicates += 1
             else:
-                seen.add(row_str)
+                seen.add(row_hash)
         
         analysis['duplicates'] = duplicates
         
@@ -156,7 +184,7 @@ def get_dataset_analysis(request, dataset_id):
     except Dataset.DoesNotExist:
         return Response({'error': 'Dataset not found'}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
-        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({'error': f'Error processing dataset: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['GET'])
 def list_datasets(request):
