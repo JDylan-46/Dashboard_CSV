@@ -4,12 +4,11 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from .models import Dataset
-import pandas as pd
 import json
-import numpy as np
+import csv
 from django.views.decorators.csrf import csrf_exempt
-from django.core.files.storage import default_storage
-import os
+from collections import Counter
+import io
 
 def dashboard_view(request):
     """Vista principal del dashboard"""
@@ -48,70 +47,109 @@ def get_dataset_analysis(request, dataset_id):
     try:
         dataset = Dataset.objects.get(id=dataset_id)
         
-        # Leer el archivo CSV con optimizaciones para archivos grandes
-        df = pd.read_csv(dataset.file.path, 
-                        low_memory=False,  # Evita warnings de tipos mixtos
-                        dtype=str,         # Lee todo como string inicialmente
-                        na_values=['', 'NA', 'N/A', 'null', 'NULL', 'None'])
+        # Leer el archivo CSV usando el módulo csv nativo de Python
+        with open(dataset.file.path, 'r', encoding='utf-8-sig') as file:
+            # Detectar el delimitador
+            sample = file.read(1024)
+            file.seek(0)
+            delimiter = ','
+            if ';' in sample and sample.count(';') > sample.count(','):
+                delimiter = ';'
+            
+            reader = csv.DictReader(file, delimiter=delimiter)
+            rows = list(reader)
         
-        # Intentar convertir columnas numéricas
-        for col in df.columns:
-            try:
-                # Intenta convertir a numérico
-                numeric_series = pd.to_numeric(df[col], errors='coerce')
-                # Si más del 70% son números válidos, considerarla numérica
-                if numeric_series.notna().sum() / len(df) > 0.7:
-                    df[col] = numeric_series
-            except:
-                pass  # Mantener como string si no se puede convertir
+        if not rows:
+            return Response({'error': 'CSV file is empty'}, status=status.HTTP_400_BAD_REQUEST)
         
-        # Análisis descriptivo básico
+        column_names = list(rows[0].keys())
+        total_rows = len(rows)
+        
+        # Análisis básico
         analysis = {
             'basic_info': {
-                'rows': len(df),
-                'columns': len(df.columns),
-                'column_names': df.columns.tolist(),
-                'memory_usage': df.memory_usage(deep=True).sum()
+                'rows': total_rows,
+                'columns': len(column_names),
+                'column_names': column_names,
+                'memory_usage': len(str(rows))  # Aproximación simple
             },
-            'missing_values': df.isnull().sum().to_dict(),
-            'duplicates': int(df.duplicated().sum()),
-            'data_types': df.dtypes.astype(str).to_dict(),
+            'missing_values': {},
+            'duplicates': 0,
+            'data_types': {},
             'numeric_summary': {},
             'categorical_summary': {}
         }
         
-        # Análisis para columnas numéricas (optimizado)
-        numeric_columns = df.select_dtypes(include=[np.number]).columns
-        for col in numeric_columns[:10]:  # Limitar a 10 columnas numéricas para rendimiento
-            try:
-                col_data = df[col].dropna()  # Remover NaN para cálculos
-                if len(col_data) > 0:
+        # Analizar cada columna
+        for col in column_names:
+            values = [row[col] for row in rows]
+            
+            # Contar valores faltantes
+            missing_count = sum(1 for v in values if v in ['', 'NULL', 'null', 'N/A', 'NA', None])
+            analysis['missing_values'][col] = missing_count
+            
+            # Determinar tipo de datos
+            non_empty_values = [v for v in values if v not in ['', 'NULL', 'null', 'N/A', 'NA', None]]
+            
+            if not non_empty_values:
+                analysis['data_types'][col] = 'Empty'
+                continue
+            
+            # Intentar determinar si es numérico
+            numeric_count = 0
+            numeric_values = []
+            
+            for val in non_empty_values[:100]:  # Tomar muestra de 100 valores
+                try:
+                    num_val = float(val.replace(',', '.'))
+                    numeric_values.append(num_val)
+                    numeric_count += 1
+                except:
+                    pass
+            
+            if numeric_count > len(non_empty_values) * 0.7:  # Si más del 70% son numéricos
+                analysis['data_types'][col] = 'Numérico'
+                
+                # Estadísticas numéricas
+                if numeric_values:
+                    sorted_vals = sorted(numeric_values)
+                    n = len(sorted_vals)
+                    
                     analysis['numeric_summary'][col] = {
-                        'mean': float(col_data.mean()),
-                        'median': float(col_data.median()),
-                        'std': float(col_data.std()),
-                        'min': float(col_data.min()),
-                        'max': float(col_data.max()),
-                        'unique_values': int(col_data.nunique())
+                        'mean': sum(sorted_vals) / n,
+                        'median': sorted_vals[n//2] if n % 2 == 1 else (sorted_vals[n//2-1] + sorted_vals[n//2]) / 2,
+                        'min': min(sorted_vals),
+                        'max': max(sorted_vals),
+                        'unique_values': len(set(sorted_vals))
                     }
-            except Exception as e:
-                # Si hay error en alguna columna, continuar con las demás
-                continue
+                    
+                    # Calcular desviación estándar
+                    mean = analysis['numeric_summary'][col]['mean']
+                    variance = sum((x - mean) ** 2 for x in sorted_vals) / n
+                    analysis['numeric_summary'][col]['std'] = variance ** 0.5
+            else:
+                analysis['data_types'][col] = 'Texto'
+                
+                # Estadísticas categóricas
+                value_counts = Counter(non_empty_values)
+                most_common = dict(value_counts.most_common(10))
+                
+                analysis['categorical_summary'][col] = {
+                    'unique_values': len(set(non_empty_values)),
+                    'most_frequent': most_common
+                }
         
-        # Análisis para columnas categóricas (optimizado)
-        categorical_columns = df.select_dtypes(include=['object']).columns
-        for col in categorical_columns[:10]:  # Limitar a 10 columnas categóricas para rendimiento
-            try:
-                col_data = df[col].dropna()  # Remover NaN
-                if len(col_data) > 0:
-                    value_counts = col_data.value_counts().head(10)
-                    analysis['categorical_summary'][col] = {
-                        'unique_values': int(col_data.nunique()),
-                        'most_frequent': value_counts.to_dict()
-                    }
-            except Exception as e:
-                # Si hay error en alguna columna, continuar con las demás
-                continue
+        # Contar duplicados (comparación simple)
+        seen = set()
+        duplicates = 0
+        for row in rows:
+            row_str = str(sorted(row.items()))
+            if row_str in seen:
+                duplicates += 1
+            else:
+                seen.add(row_str)
+        
+        analysis['duplicates'] = duplicates
         
         return Response(analysis)
         
@@ -119,7 +157,7 @@ def get_dataset_analysis(request, dataset_id):
         return Response({'error': 'Dataset not found'}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+
 @api_view(['GET'])
 def list_datasets(request):
     """API para listar todos los datasets"""
