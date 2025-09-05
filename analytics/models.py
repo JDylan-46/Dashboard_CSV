@@ -11,7 +11,10 @@ class Dataset(models.Model):
     
     def delete(self, *args, **kwargs):
         # Eliminar el archivo físico cuando se elimina el modelo
-        if self.file:
-            if os.path.isfile(self.file.path):
-                os.remove(self.file.path)
+        if self.file and hasattr(self.file, 'path'):
+            try:
+                if os.path.isfile(self.file.path):
+                    os.remove(self.file.path)
+            except:
+                pass  # Si no puede eliminar, continúa
         super().delete(*args, **kwargs)
