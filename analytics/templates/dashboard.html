@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Análisis de Datos</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 3rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+
+        .upload-section {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 10px;
+            padding: 50px;
+            margin: 20px 0;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            background: #f8f9ff;
+        }
+
+        .upload-area:hover {
+            border-color: #5a6fd8;
+            background: #f0f2ff;
+            transform: translateY(-2px);
+        }
+
+        .upload-area.dragover {
+            border-color: #4c63d2;
+            background: #e8ebff;
+        }
+
+        .upload-icon {
+            font-size: 4rem;
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+
+        .upload-text {
+            font-size: 1.3rem;
+            margin-bottom: 10px;
+            color: #555;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 25px;
+            font-size: 1.1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .analysis-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 25px;
+            margin-top: 30px;
+        }
+
+        .analysis-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease;
+        }
+
+        .analysis-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .card-icon {
+            font-size: 2rem;
+            margin-right: 15px;
+            color: #667eea;
+        }
+
+        .card-title {
+            font-size: 1.4rem;
+            color: #333;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: #fee;
+            border: 1px solid #fcc;
+            color: #c33;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            display: none;
+        }
+
+        .success-message {
+            background: #efe;
+            border: 1px solid #cfc;
+            color: #363;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            display: none;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-top: 15px;
+        }
+
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .stat-item:last-child {
+            border-bottom: none;
+        }
+
+        .stat-label {
+            font-weight: 600;
+            color: #555;
+        }
+
+        .stat-value {
+            color: #667eea;
+            font-weight: bold;
+        }
+
+        #analysisResults {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1><i class="fas fa-chart-bar"></i> Dashboard de Análisis</h1>
+            <p>Sube tu archivo CSV y obtén un análisis descriptivo completo en tiempo real</p>
+        </div>
+
+        <div class="upload-section">
+            <h2>Subir Dataset</h2>
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">
+                    <i class="fas fa-cloud-upload-alt"></i>
+                </div>
+                <div class="upload-text">Arrastra tu archivo CSV aquí o haz clic para seleccionar</div>
+                <p style="color: #888; margin-top: 10px;">Formatos soportados: CSV (Máximo 30MB)</p>
+                <input type="file" class="file-input" id="fileInput" accept=".csv">
+            </div>
+            <button class="btn" onclick="document.getElementById('fileInput').click()">
+                <i class="fas fa-plus"></i> Seleccionar Archivo
+            </button>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Analizando tu dataset...</p>
+        </div>
+
+        <div class="error-message" id="errorMessage"></div>
+        <div class="success-message" id="successMessage"></div>
+
+        <div id="analysisResults">
+            <div class="analysis-grid">
+                <div class="analysis-card">
+                    <div class="card-header">
+                        <i class="fas fa-info-circle card-icon"></i>
+                        <h3 class="card-title">Información Básica</h3>
+                    </div>
+                    <div id="basicInfo"></div>
+                </div>
+
+                <div class="analysis-card">
+                    <div class="card-header">
+                        <i class="fas fa-exclamation-triangle card-icon"></i>
+                        <h3 class="card-title">Valores Faltantes</h3>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="missingValuesChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="analysis-card">
+                    <div class="card-header">
+                        <i class="fas fa-copy card-icon"></i>
+                        <h3 class="card-title">Duplicados</h3>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="duplicatesChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="analysis-card">
+                    <div class="card-header">
+                        <i class="fas fa-list card-icon"></i>
+                        <h3 class="card-title">Tipos de Datos</h3>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="dataTypesChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="analysis-card">
+                    <div class="card-header">
+                        <i class="fas fa-calculator card-icon"></i>
+                        <h3 class="card-title">Estadísticas Numéricas</h3>
+                    </div>
+                    <div id="numericStats"></div>
+                </div>
+
+                <div class="analysis-card">
+                    <div class="card-header">
+                        <i class="fas fa-tags card-icon"></i>
+                        <h3 class="card-title">Variables Categóricas</h3>
+                    </div>
+                    <div id="categoricalStats"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentDatasetId = null;
+        let charts = {};
+
+        // Elementos del DOM
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const loading = document.getElementById('loading');
+        const errorMessage = document.getElementById('errorMessage');
+        const successMessage = document.getElementById('successMessage');
+        const analysisResults = document.getElementById('analysisResults');
+
+        // Configurar drag and drop
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', handleDragOver);
+        uploadArea.addEventListener('drop', handleDrop);
+        uploadArea.addEventListener('dragleave', handleDragLeave);
+        fileInput.addEventListener('change', handleFileSelect);
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        }
+
+        function handleDragLeave(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        }
+
+        function handleFileSelect(e) {
+            const files = e.target.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        }
+
+        function handleFile(file) {
+            // Validar tipo de archivo
+            if (!file.name.toLowerCase().endsWith('.csv')) {
+                showError('Por favor, selecciona un archivo CSV válido.');
+                return;
+            }
+
+            // Validar tamaño (máximo 30MB)
+            if (file.size > 30 * 1024 * 1024) {
+                showError('El archivo es demasiado grande. Máximo 30MB.');
+                return;
+            }
+
+            uploadFile(file);
+        }
+
+        function uploadFile(file) {
+            showLoading(true);
+            hideMessages();
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('name', file.name);
+
+            fetch('/api/upload/', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                currentDatasetId = data.id;
+                showSuccess(`Archivo "${data.name}" subido correctamente!`);
+                loadAnalysis(data.id);
+            })
+            .catch(error => {
+                showError('Error al subir el archivo: ' + error.message);
+                showLoading(false);
+            });
+        }
+
+        function loadAnalysis(datasetId) {
+            fetch(`/api/analysis/${datasetId}/`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                displayAnalysis(data);
+                showLoading(false);
+                analysisResults.style.display = 'block';
+            })
+            .catch(error => {
+                showError('Error al analizar el dataset: ' + error.message);
+                showLoading(false);
+            });
+        }
+
+        function displayAnalysis(data) {
+            // Información básica
+            displayBasicInfo(data.basic_info);
+            
+            // Gráficos
+            createMissingValuesChart(data.missing_values);
+            createDuplicatesChart(data.duplicates, data.basic_info.rows);
+            createDataTypesChart(data.data_types);
+            
+            // Estadísticas
+            displayNumericStats(data.numeric_summary);
+            displayCategoricalStats(data.categorical_summary);
+        }
+
+        function displayBasicInfo(basicInfo) {
+            const container = document.getElementById('basicInfo');
+            container.innerHTML = `
+                <div class="stat-item">
+                    <span class="stat-label">Filas:</span>
+                    <span class="stat-value">${basicInfo.rows.toLocaleString()}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Columnas:</span>
+                    <span class="stat-value">${basicInfo.columns}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Uso de memoria:</span>
+                    <span class="stat-value">${formatBytes(basicInfo.memory_usage)}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Columnas:</span>
+                    <span class="stat-value">${basicInfo.column_names.join(', ')}</span>
+                </div>
+            `;
+        }
+
+        function createMissingValuesChart(missingValues) {
+            const ctx = document.getElementById('missingValuesChart').getContext('2d');
+            
+            // Destruir gráfico anterior si existe
+            if (charts.missingValues) {
+                charts.missingValues.destroy();
+            }
+
+            const columns = Object.keys(missingValues);
+            const values = Object.values(missingValues);
+            
+            // Filtrar solo columnas con valores faltantes
+            const filteredData = columns.map((col, index) => ({
+                column: col,
+                missing: values[index]
+            })).filter(item => item.missing > 0);
+
+            if (filteredData.length === 0) {
+                ctx.canvas.parentNode.innerHTML = '<p style="text-align: center; color: #28a745; font-weight: bold; margin-top: 50px;">✅ No hay valores faltantes</p>';
+                return;
+            }
+
+            charts.missingValues = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: filteredData.map(item => item.column),
+                    datasets: [{
+                        label: 'Valores Faltantes',
+                        data: filteredData.map(item => item.missing),
+                        backgroundColor: 'rgba(255, 99, 132, 0.6)',
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                stepSize: 1
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    }
+                }
+            });
+        }
+
+        function createDuplicatesChart(duplicates, totalRows) {
+            const ctx = document.getElementById('duplicatesChart').getContext('2d');
+            
+            if (charts.duplicates) {
+                charts.duplicates.destroy();
+            }
+
+            const uniqueRows = totalRows - duplicates;
+            
+            charts.duplicates = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Filas Únicas', 'Filas Duplicadas'],
+                    datasets: [{
+                        data: [uniqueRows, duplicates],
+                        backgroundColor: [
+                            'rgba(75, 192, 192, 0.6)',
+                            'rgba(255, 206, 86, 0.6)'
+                        ],
+                        borderColor: [
+                            'rgba(75, 192, 192, 1)',
+                            'rgba(255, 206, 86, 1)'
+                        ],
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+        }
+
+        function createDataTypesChart(dataTypes) {
+            const ctx = document.getElementById('dataTypesChart').getContext('2d');
+            
+            if (charts.dataTypes) {
+                charts.dataTypes.destroy();
+            }
+
+            // Contar tipos de datos
+            const typeCounts = {};
+            Object.values(dataTypes).forEach(type => {
+                // Simplificar nombres de tipos
+                let simpleType = type;
+                if (type.includes('int') || type.includes('float')) {
+                    simpleType = 'Numérico';
+                } else if (type.includes('object')) {
+                    simpleType = 'Texto';
+                } else if (type.includes('bool')) {
+                    simpleType = 'Booleano';
+                } else if (type.includes('datetime')) {
+                    simpleType = 'Fecha';
+                }
+                
+                typeCounts[simpleType] = (typeCounts[simpleType] || 0) + 1;
+            });
+
+            const colors = [
+                'rgba(102, 126, 234, 0.6)',
+                'rgba(118, 75, 162, 0.6)',
+                'rgba(255, 159, 64, 0.6)',
+                'rgba(54, 162, 235, 0.6)',
+                'rgba(255, 99, 132, 0.6)'
+            ];
+
+            charts.dataTypes = new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: Object.keys(typeCounts),
+                    datasets: [{
+                        data: Object.values(typeCounts),
+                        backgroundColor: colors.slice(0, Object.keys(typeCounts).length),
+                        borderWidth: 2,
+                        borderColor: '#fff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+        }
+
+        function displayNumericStats(numericSummary) {
+            const container = document.getElementById('numericStats');
+            
+            if (Object.keys(numericSummary).length === 0) {
+                container.innerHTML = '<p style="text-align: center; color: #888;">No hay columnas numéricas en el dataset</p>';
+                return;
+            }
+
+            let html = '';
+            for (const [column, stats] of Object.entries(numericSummary)) {
+                html += `
+                    <div style="margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+                        <h4 style="color: #667eea; margin-bottom: 10px;">${column}</h4>
+                        <div class="stat-item">
+                            <span class="stat-label">Media:</span>
+                            <span class="stat-value">${stats.mean ? stats.mean.toFixed(2) : 'N/A'}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Mediana:</span>
+                            <span class="stat-value">${stats.median ? stats.median.toFixed(2) : 'N/A'}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Desv. Estándar:</span>
+                            <span class="stat-value">${stats.std ? stats.std.toFixed(2) : 'N/A'}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Min - Max:</span>
+                            <span class="stat-value">${stats.min ? stats.min.toFixed(2) : 'N/A'} - ${stats.max ? stats.max.toFixed(2) : 'N/A'}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Valores únicos:</span>
+                            <span class="stat-value">${stats.unique_values}</span>
+                        </div>
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+        }
+
+        function displayCategoricalStats(categoricalSummary) {
+            const container = document.getElementById('categoricalStats');
+            
+            if (Object.keys(categoricalSummary).length === 0) {
+                container.innerHTML = '<p style="text-align: center; color: #888;">No hay columnas categóricas en el dataset</p>';
+                return;
+            }
+
+            let html = '';
+            for (const [column, stats] of Object.entries(categoricalSummary)) {
+                html += `
+                    <div style="margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 15px;">
+                        <h4 style="color: #667eea; margin-bottom: 10px;">${column}</h4>
+                        <div class="stat-item">
+                            <span class="stat-label">Valores únicos:</span>
+                            <span class="stat-value">${stats.unique_values}</span>
+                        </div>
+                        <div style="margin-top: 10px;">
+                            <strong>Más frecuentes:</strong>
+                            <ul style="margin-top: 5px; padding-left: 20px;">
+                `;
+                
+                for (const [value, count] of Object.entries(stats.most_frequent).slice(0, 5)) {
+                    html += `<li>${value}: ${count}</li>`;
+                }
+                
+                html += `
+                            </ul>
+                        </div>
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+        }
+
+        // Funciones auxiliares
+        function showLoading(show) {
+            loading.style.display = show ? 'block' : 'none';
+        }
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+            setTimeout(() => {
+                errorMessage.style.display = 'none';
+            }, 5000);
+        }
+
+        function showSuccess(message) {
+            successMessage.textContent = message;
+            successMessage.style.display = 'block';
+            setTimeout(() => {
+                successMessage.style.display = 'none';
+            }, 3000);
+        }
+
+        function hideMessages() {
+            errorMessage.style.display = 'none';
+            successMessage.style.display = 'none';
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+    </script>
+</body>
+</html>
